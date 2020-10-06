@@ -1,0 +1,142 @@
+---
+title: "ML_Assignment_2"
+Author: Reginald Mordi
+Course: Machine Learning 2020
+Date: 10/01/2020
+---
+
+```{r}
+library(ggvis)
+library(e1071)
+```
+
+```{r}
+library(caret)
+
+# Let's import dataset
+UB <- read.csv("UniversalBank.csv")
+
+# Converting Personal.Loan to Factor
+UB$Personal.Loan <- as.factor(UB$Personal.Loan)
+
+# Understanding the structure of the dataset
+str(UB)
+
+# creating dummy variables for Education as it has 3 levels
+library(dummies)
+dummy_model <- dummyVars(~Education,data=UB)
+head(predict(dummy_model,UB))
+Loan_Dummy<- dummy.data.frame(UB, names = c("Education"), sep= ".")
+UNBank <- subset(Loan_Dummy, select = -c(1, 5))
+```
+
+```{r}
+# Dividing data to Train and Validation
+library(ISLR)
+set.seed(15)
+Index_Train <-createDataPartition(UNBank$Personal.Loan, p=0.6, list=FALSE) # Use 60% of data for training and the rest for validation
+Train <-UNBank[Index_Train,]
+Valid <-UNBank[-Index_Train,]
+
+train.norm.df <- Train
+valid.norm.df <- Valid
+U_Predictors<-UNBank[,-10]
+U_labels<-UNBank[,10]
+
+# Normalizing Training data
+norm_model<-preProcess(Train, method = c('range'))
+# Normalizing Valid data
+norm_model<-preProcess(Valid, method = c('range'))
+Train[, -10]<-predict(norm_model,Train[, -10]) # Replace first two columns with normalized values
+Valid[, -10] <- predict(norm_model, Valid[, -10])
+
+```
+
+
+```{r}
+library(FNN)
+
+nn <- knn(train = Train[, -10], test = Valid[, -10], 
+          cl = Train[, 10], k = 1, prob=TRUE)
+
+# Look at the 6 first values of predicted class (i.e., default status) of test set
+head(nn)
+```
+
+
+```{r}
+customer<- data.frame(40, 10, 84, 2, 2, 0, 1, 0, 0, 0, 0, 1, 1)
+# How would this customer be classified when using k=1
+knn.new <- knn(Train[, -10], customer, cl=Train[, 10], k=1, prob = 0.5)
+knn.new
+```
+
+```{r}
+library(dplyr)
+
+#2.	What is a choice of k that balances between overfitting and ignoring the predictor information?
+accuracy.df <- data.frame(k = seq(1, 14, 1), accuracy = rep(0, 14))
+
+for(i in 1:14) {
+                  knn <- knn(Train[, -10], Valid[, -10], cl = Train[, 10], k = i)
+                  accuracy.df[i, 2] <- confusionMatrix(knn, Valid[, 10])$overall[1] 
+                }
+accuracy.df
+
+which.max((accuracy.df$accuracy))
+
+```
+
+```{r}
+#3.	Show the confusion matrix for the validation data that results from using the best k, which is equal to 3.
+knn.valid <- knn(Train[, -10],Valid[, -10],cl=Train[, 10],k=3,prob = 0.5)
+confusionMatrix(knn.valid, Valid[, 10]) 
+
+#4. Classify the customer using the best k
+knn.pred.new<- knn(Train[, -10],customer,cl=Train[, 10],k=3,prob = 0.5)
+knn.pred.new
+```
+
+```{r}
+# predicting customer using all data
+knn.pred4 <- knn(U_Predictors, customer, cl=U_labels, k=3, prob = TRUE)
+knn.pred4
+```
+
+
+```{r}
+set.seed(15)
+Index_Train_2<-createDataPartition(UNBank$Personal.Loan, p=0.5, list=FALSE) # Use 50% of data for training and the rest for validation and Test
+Train_2 <-UNBank[Index_Train_2,]
+Test_Valid_Data <-UNBank[-Index_Train_2,] # Test and Validation
+
+Index_Test<-createDataPartition(Test_Valid_Data$Personal.Loan, p=0.4, list=FALSE)
+Test_2 <- Test_Valid_Data[Index_Test,]
+Valid_2 <-Test_Valid_Data[-Index_Test,]
+train.norm.df_2 <- Train_2
+valid.norm.df_2 <- Valid_2
+norm.values_2 <- preProcess(Train_2[, -10], method=c("center", "scale"))
+train.norm.df_2[, -10] <- predict(norm.values_2, Train_2[, -10])
+norm.values_2 <- preProcess(Valid_2[, -10], method=c("center", "scale"))
+valid.norm.df_2[, -10] <- predict(norm.values_2, Valid_2[, -10])
+test.norm.df_2 <- predict(norm.values_2, Test_2[, -10])
+
+Train_labels_2 <-Train_2[,10] 
+Valid_labels_2 <-Valid_2[,10]
+Test_labels_2 <-Test_2[,10]
+
+nn_2 <- knn(train.norm.df_2[, -10], test.norm.df_2 , cl=train.norm.df_2[, 10], k=3, prob = 0.5)
+
+library(ggplot2)
+
+confusionMatrix(nn_2,Test_labels_2)
+
+nn_2_Valid <- knn(valid.norm.df_2[, -10], test.norm.df_2, cl=valid.norm.df_2[, 10], k=3, prob = 0.5)
+
+confusionMatrix(nn_2_Valid,Test_labels_2)
+```
+#### Compare the confusion matrix of the test set with that of the training and validation sets. Comment on the differences and their reason?
+
+**The accuracy of training model is higher than the accuracy of the validation model in the confusion matrix**
+
+**The Training set has more data than validation set. so, Accuracy is higher.**
