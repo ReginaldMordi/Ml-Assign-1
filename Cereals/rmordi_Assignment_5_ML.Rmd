@@ -1,0 +1,335 @@
+---
+title: "Assignment 5"
+author: "Reginald Mordi"
+course: Machine Learning
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+* Hierarchical clustering to a dataset Cereals
+
+
+```{r}
+library(devtools)
+library(htmltools)
+library(caret)
+```
+
+```{r}
+library(ISLR)
+library(dplyr)
+library(ggvis)
+library(cluster)
+```
+
+```{r}
+library(dendextend)
+library(factoextra)
+library(class)
+library(FNN)
+library(ggplot2)
+library(e1071)
+```
+
+# Reading Data
+```{r}
+#Read Data 
+cereals <- read.csv("Cereals.csv")
+
+#Remove all records with missing measurements from the dataset.
+cer <- na.omit(cereals)
+```
+
+# Data Pre-processing
+```{r}
+# checking the frequency of each record
+counts<-as.data.frame(table(cer[1]))
+head(counts)
+# as we see that the records are unique
+```
+
+* so we will Convert the names of the breakfast cereals to the row names, as this will later help us in visualising the clusters
+```{r}
+# set row names to the cereals names
+rownames(cer) <- cer$name
+
+# Drop the name column as it is now just redundant information
+cer$name = NULL
+
+# we will use the continuous numerical values, and applying the euclidean distance method
+cer_numeric <- cer[,-c(1,2)]
+str(cer_numeric)
+```
+* Variable 'shelf' is a categorical variable. Lets convert appropriately.
+
+```{r}
+cer_numeric$shelf <- as.factor(cer_numeric$shelf)
+#install.packages("dummies")
+library(dummies)
+cerdummy <- dummyVars(~shelf,data=cer_numeric)
+head(predict(cerdummy,cer_numeric))
+cer_N <- dummy.data.frame(cer_numeric, names = c("shelf"), sep= ".")
+```
+
+```{r, fig.height=6, fig.width=14}
+boxplot(cer_N)
+# as we noticed that the range of most of variables is widly different and we don't want the algorithm to depend on an arbitrary variable unit so, we will Scale the data using function scale.
+cer_scaled <- scale(cer_N)
+head(cer_scaled)
+```
+
+# Data Exploration
+```{r, fig.height=5, fig.width=11}
+library(corrplot)
+cerealMat <- cor(cer_scaled)
+corrplot(cerealMat, method = "circle")
+distance <- get_dist(cer_scaled)
+fviz_dist(distance, gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+* we can notice that there is a strong positive relation between customer rating and (fiber, protein), while has a negative elation with (calories and sugars)
+* also we can notice the very strong positive relation between fiber and potass
+
+## 1
+# Hierarchical Clustering
+* . Applying hierarchical clustering to the data using Euclidean distance to the normalized measurements.
+* - Use Agnes to compare the clustering from  single linkage, complete linkage, average linkage, and Ward. Choose the best method ?.
+
+* Using the agnes function to get the agglomerative coefficient, which measures the amount of clustering structure found (values closer to 1 suggest strong clustering structure).
+* This allows us to find certain hierarchical clustering methods that can identify stronger clustering structures. 
+```{r}
+library(tidyverse)
+# methods to assess
+m <- c("single", "complete", "average", "ward")
+names(m) <- c("single", "complete", "average", "ward")
+# function to compute coefficient
+ac <- function(x) {
+  agnes(cer_scaled, method = x)$ac}
+map_dbl(m, ac)
+```
+* Here we see that Ward's method identifies the strongest clustering structure of the four methods assessed.
+
+* ward method - find the pair of clusters that leads to minimum increase in total within-cluster variance after merging
+
+# Now Applying hierarchical clustering using Euclidean distance and Ward's method
+```{r, fig.height=9, fig.width=14}
+library(stats)
+# Apply hierarchical clustering to the data using Euclidean distance
+d <- dist(cer_scaled, method = "euclidean")
+# Similar to before we can visualize the dendrogram using ward:
+hc <- hclust(d, method = "ward.D2")
+plot(hc, cex = 0.6, hang = -1, main = "Dendrogram of agnes")
+```
+# B
+* Cutting the tree to 6 clusters, using the cutree() function
+```{r}
+# Cut tree into 6 groups
+clusters <- cutree(hc, k = 6)
+# Number of members in each cluster
+table(clusters)
+# Store the clusters in a data frame along with the cereals data
+cereals_clusters <- cbind(clusters, cer_scaled)
+```
+```{r}
+# Have a look at the head of the new data frame
+colnames(cereals_clusters)[1] <- "clusters"
+head(cereals_clusters)
+```
+ 
+* We can display the dendrogram for hierarchical clustering, using the plot() function
+```{r, fig.height=9, fig.width=14}
+plot(hc, cex= 0.6, hang = -1)
+#Plot clusters being surrounded by a border, using the rect.hclust() function
+rect.hclust(hc, k = 6, border = 2:7)
+abline(h = 10.9, col = 'red')
+```
+we can also use the fviz_cluster function from the factoextra package to visualize the result in a scatter plot.
+
+```{r, fig.height=6, fig.width=11}
+fviz_cluster(list(data = cer_scaled, cluster = clusters))
+```
+## 2
+# Determining Optimal Clusters.
+* Similar to how we determined optimal clusters with k-means clustering, we can execute similar approaches for hierarchical clustering:
+* lets use the following method
+### Average Silhouette Method
+    - The silhouette width/value is a measure of how similar an object is to its own cluster (cohesion) compared to other clusters (separation)  [i.e., intra-cluster cohesion and inter-cluster separation]
+    - Ranges from -1 to +1  
+    - Values closer to 1 means higher quality of the cluster created
+* To perform the average silhouette method we follow a similar process.
+```{r, fig.height=6, fig.width=13}
+set.seed(123)
+library(cluster)
+dist = daisy(x = cer_scaled, metric = "euclidean")
+
+sil_value = silhouette(clusters, dist = dist)
+plot(sil_value)
+```
+* from the above chart we can see that the average silhoutte width has the highest value when k=4
+
+### Now clustering data with k=4
+```{r, fig.height=9, fig.width=14}
+# Cut tree into 4 groups
+clusters_4 <- cutree(hc, k = 4)
+# Number of members in each cluster
+table(clusters_4)
+# Store the clusters in a data frame along with the cereals data
+cereals_clusters_4 <- cbind(clusters_4, cer_scaled)
+# Have a look at the head of the new data frame
+colnames(cereals_clusters_4)[1] <- "clusters4"
+head(cereals_clusters_4)
+plot(hc, cex= 0.6, hang = -1)
+#Plot clusters being surrounded by a border, using the rect.hclust() function
+rect.hclust(hc, k = 4, border = 2:7)
+abline(h = 14.2, col = 'red')
+```
+
+## 3
+### Comment on the structure of the clusters and on their stability. Hint: To check stability, partition the data and see how well clusters formed based on one part apply to the other part. To do this: 
+
+```{r, fig.height=10, fig.width=14}
+# set labels as cluster membership and cereal name
+row.names(cer_scaled) <- paste(clusters_4, ": ", row.names(cer_N), sep = "")
+
+# plot heatmap to understand the structure of the data
+# rev() reverses the color mapping to large = dark
+heatmap(as.matrix(cer_scaled), Colv = NA, hclustfun = hclust, 
+        col=rev(paste("gray",1:99,sep="")))
+```
+* as we see from the heatmap that each cluster structure is affected by main variable or a group of variables, the cluster 1 is most driven by rating and exists in the shelf 2 and 1, while cluster 2 represented by the weight and calories of cereals, also cluster 4 highly affected by the shelf location 2 with high sugars and cluster3 by shelf location 1 which have the high caebo an so on,
+
+* we can Visualize the characteristics of clusters of all data
+```{r, fig.height=6, fig.width=10}
+# claculating clutsrs centroids for all data clustering, using aggregate function
+centroids_all <- aggregate(cer_scaled, by=list(cluster=clusters_4), mean)
+library(hrbrthemes)
+library(GGally)
+library(viridis)
+ggparcoord((centroids_all),
+           columns = 1:16, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.3 
+)
+```
+
+
+### Checking clusters' stability.
+* we will partiion the data to 2 groups A and B
+```{r}
+# partition 50% of data for A and 50% for B 
+library(caTools)
+set.seed(123)   #  set seed to ensure we always have same random numbers generated
+A<-cer_N[1:37,] # Partition A
+B<-cer_N[38:74,] # Partition B
+
+#Scaling datasets first
+A_scaled <- scale(A)
+B_scaled <- scale(B)
+```
+
+### Now clustering dataset A
+* we will use thw same method for clustering and the same k = 4
+```{r, fig.height=6, fig.width=9}
+library(stats)
+library(HAC)
+# Apply hierarchical clustering to the data using Euclidean distance
+d_A <- dist(A_scaled, method = "euclidean")
+# Similar to before we can visualize the dendrogram using ward:
+hc_A <- hclust(d_A, method = "ward.D2")
+# Cut tree into 4 groups
+clust_A <- cutree(hc_A, k = 4)
+# Number of members in each cluster
+table(clust_A)
+# Store the clusters in a data frame along with the cereals data
+cer_clust_A <- cbind(clust_A, A_scaled)
+# Have a look at the head of the new data frame
+colnames(cer_clust_A)[1] <- "clust_A"
+head(cer_clust_A)
+plot(hc_A, cex= 0.6, hang = -1)
+#Plot clusters being surrounded by a border, using the rect.hclust() function
+rect.hclust(hc_A, k = 4, border = 2:7)
+abline(h = 10.3, col = 'red')
+```
+
+### Calculating centroids of dataset A clusters
+```{r}
+# calculating cluters' centroids of partition A clusters, using aggregate function
+centroids_A <- aggregate(A_scaled, by=list(cluster=clust_A), mean)
+centroids_A
+```
+* we can Visualize the characteristics of clusters of prtition A
+```{r, fig.height=5, fig.width=9}
+library(hrbrthemes)
+library(GGally)
+library(viridis)
+ggparcoord((centroids_A),
+           columns = 1:16, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.3 
+)
+```
+* now after we calculated the centroids of the clusters found by hierarchical clustering we will assign each observation of dataset B to the closest centroids of A clusters.
+
+```{r}
+# now we can assign observations of B partition to the clusters centroids of partition A.
+Assign<-data.frame(observations=seq(1,37,1),cluster=rep(0,37))
+for(i in 0:37)
+{
+  x<-as.data.frame(rbind(centroids_A[,-1],B_scaled[i,]))
+  y<-as.matrix(get_dist(x))
+  Assign[i,2]<-which.min(y[4,-4])
+}
+rownames(Assign) <-rownames(B_scaled)
+Assign
+```
+* we need to know which clusters the observations of partition B are assigned to.
+```{r}
+table(Assign)
+```
+
+* as we noticed that the observations of partition B are assigned only to cluster 3 and cluster 4, with majority to cluster 3  this gives us an indication about the consistency and stability of those clusters 
+
+* now we will compare between the assignment of B observations to clusters of partition A and the whole data.
+```{r}
+cbind(A_partition=Assign$cluster,All_data=cereals_clusters_4[38:74,1])
+```
+
+```{r}
+table(Assign$cluster==cereals_clusters_4[38:74,1])
+```
+
+```{r}
+#install.packages("fpc")
+library(fpc)
+set.seed(123)
+#Input the scaled cereals_data
+hclust_stability = clusterboot(cer_scaled, clustermethod=hclustCBI, method="ward.D2", k=4, count = FALSE)
+hclust_stability
+```
+
+* it seems that cluster 4 is very stable cluster while cluster 2, 3 show some patterns that needs to be investigated more.
+
+* from the above results we can see that the the lowest value for dissolution rate corresponding to the cluster 4 and this is explained by the Jaccard bootstrap
+
+
+### Now we will Extract each cluster focusing on neutritional variables 
+```{r}
+groups <- clusters_4
+print_clusters <- function(labels, k) {for(i in 1:k) {print(paste("cluster", i))
+print(cer[labels==i,c("calories","protein","fat","sodium","fiber","carbo","sugars","potass","vitamins","rating")])}}
+print_clusters(groups, 4)
+```
+## 4
+```{r} 
+#	The elementary public schools would like to choose a set of cereals to include in their daily cafeterias!
+
+# for to choose a set of cereals for healthy diet sould we normalize the data or not?
+
+# it depends, if the range of most of variables is widly different and we don't want the algorithm to depend on an arbitrary variable unit so, we will normalize the data. also if the decision depends on a catergorical or binary variables like "type" in our data we will not normalize the data.
+
+# As we can see from the clusters, there is a strong correlation between dietary protein , vitamins, fiber and potassium.
+
+#Healthy cereals with much dietary filters, less calories and less fats, high proteins extra fibers and potass: 100% Bran, All-Bran with and All-Bran . which grouped by the cluster 1 also,
+# we can notice that cluster 1 has the highest customer rating which is a logical prediction, also Customer rating is pretty much negatively correlated to fat, sugars and calories.
+#cluster 1 represents those types of healthy cereals, so for the elementary public schools "cluster 1" is the best choice 
+```
