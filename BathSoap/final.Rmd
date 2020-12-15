@@ -1,0 +1,452 @@
+---
+title: "Final Exam"
+author: "Reginald Mordi"
+date: "December 1, 2020"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r}
+library(class)
+library(caret)
+library(ISLR)
+library(dummies)
+library(FNN)
+library(dplyr)
+library(ggvis)
+library(ggplot2)
+library(e1071)
+```
+
+```{r}
+library(tidyverse)
+library(factoextra) 
+library(flexclust)
+library(imputeTS)
+library(stats)
+```
+
+
+### Reading Data
+```{r}
+#Read Data 
+Data <- read.csv("BathSoap.csv")
+
+Soap_Data <- Data
+```
+
+### Understanding Data
+```{r}
+summary(Soap_Data)
+str(Soap_Data)
+```
+
+### Data Pre-processing
+
+** Checking if there is any missing data
+```{r, fig.height=7, fig.width=15}
+# A visual take on the missing values might be helpful: the Amelia package has a special plotting function missmap() that will plot dataset and highlight missing values:
+library(Amelia)
+missmap(Soap_Data, main = "Missing values vs observed")
+```
+** There is no data missing in our dataset
+
+* The Member.id variable is unique identifier for each household so I will Convert it to the row names, as this will later help me in visualizing the clusters
+```{r}
+# set row names to the Member.id
+rownames(Soap_Data) <- Soap_Data$Member.id
+
+# Drop the name column as it is now just redundant information
+Soap_Data[,1] = NULL
+```
+
+* As the data consists of percentage of total volume purchased by the households, taking percentage and normalizing them will not give actual loyalty of the household to one brand. For example, if I consider 20% of 1000 volume purchased and 20% of 500 volume purchased the scale will differ for 'max to one brand' variable. That's why initially all the percentages are converted into actual volumes before normalizing the data.
+
+### Q 1 - A
+### Clusters based on "Purchase Behavior" variables
+```{r}
+# first I need to convert factor variables to numeric as here from % to decimals
+a <- Soap_Data[19:45] %>% mutate_each(funs(as.numeric(gsub("%", "", ., fixed = TRUE))/100))
+Soap <- cbind(Soap_Data[1:18],a)
+
+# Second, Sub setting purchase behavior variables
+P_Behavior<-Soap[,11:30]
+head(P_Behavior)
+# Then find out the total volumes for each brand category
+volume <- function(x){
+return(x*P_Behavior$Total.Volume)
+}
+vol<-as.data.frame(lapply(P_Behavior[9:20],volume))
+```
+
+* For brand loyalty indicators, I have data for percent of purchases devoted to major brands (i.e. is a customer a total devotee of brand A?), a catch-all variable for percent of purchases devoted to other smaller brands (to reduce complexity of analysis), and (3) a derived variable that indicates the maximum share devoted to any one brand. Since CRISA is compiling this data for general marketing use, and not on behalf of one particular brand,I can say a customer who is fully devoted to brand A is similar to a customer fully devoted to brand B - both are fully loyal customers in their behavior, But if we include all the brand shares in the clustering, the analysis will treat those two customers as very different, So I will use only the derived variable for maximum purchase share for a brand, any brand, plus "max.brand.ind" and the "other.brand.ind," along with the purchase.ind (for volume, frequency, etc.). I will not use the individual values - "brand.ind."
+```{r}
+Purchase_Behavior <- P_Behavior[,1:8]
+Purchase_Behav <- cbind(Purchase_Behavior,vol)
+head(Purchase_Behav)
+Purchase_Behav$max <- apply(Purchase_Behav[,12:19], 1, max)
+head(Purchase_Behav)
+```
+
+```{r, fig.height=6, fig.width=14}
+boxplot(Purchase_Behav)
+# Note that the range of most of variables is wildly different and I do not want the algorithm to depend on an arbitrary variable unit so, I will Scale the data using function scale.
+Soap_scaled <- scale(Purchase_Behav[c(1:8,20,21)])
+head(Soap_scaled)
+boxplot(Soap_scaled)
+```
+### Using K-mean clustring for Purchase Behavior clustering
+
+** Checking the best k using "silhouette" method
+```{r}
+fviz_nbclust(Soap_scaled, kmeans, method = "silhouette")
+```
+
+* The above graph shows that the k =2 is the best number of clusters
+
+### I can use k= 2 for initial clustering
+```{r}
+set.seed(123)
+k2 <- kmeans(Soap_scaled, centers = 2, nstart = 25) # k = 2, number of restarts = 25
+k2$centers
+k2$size
+```
+* The two clusters are well-separated on all variables, except transaction volume. Cluster 1 (n=191) is high activity & value, with low loyalty. Cluster 2 (n=409) is the reverse. ("Value" here is the meaning attached to the variable - total dollar value of purchases, not some broader meaning.) 
+* Due to the randomization element in the k-means process, different runs can produce different
+cluster results.
+
+* Using another method called "elbow method" to determine the best k
+```{r, fig.height=6, fig.width=14}
+#Screen Plot - Check for the optimal number of clusters given the data
+wss <- (nrow(Soap_scaled)-1)*sum(apply(Soap_scaled,2,var))
+wss
+
+for (i in 2:15) 
+  wss[i] <- sum(kmeans(Soap_scaled, 
+                       centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters", 
+     ylab="Within groups sum of squares",
+     main="Assessing the Optimal Number of Clusters with the Elbow Method",
+     pch=19, cex=2)
+```
+* Running the k-means using algorithm using k = 3.
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+k3 <- kmeans(Soap_scaled, centers = 3, nstart = 25) # k = 3, number of restarts = 25
+fviz_cluster(k3, data = Soap_scaled) # Visualize the output
+```
+
+
+```{r, fig.height=7, fig.width=14}
+set.seed(123)
+# Plot results
+plot(Soap_scaled, col =(k3$cluster) , 
+     main="K-Means with 3 clusters", 
+     pch=16, cex=2)
+```
+
+### It is more obvious when I plot the Heat map
+```{r, fig.height=7, fig.width=14}
+#Building a data frame with the values of the center and creating a variable with the number of the cluster
+#Creating the reshape database
+center <- k3$centers
+cluster <- c(1:3)
+center_Soap <- data.frame(cluster, center)
+center_reshape <- gather(center_Soap, features, values,No..of.Brands, Brand.Runs, Total.Volume, No..of..Trans, Value, Trans...Brand.Runs, Vol.Tran, Avg..Price, Others.999, max)
+
+set.seed(123)
+library(RColorBrewer)
+# Creating the palette of colors I will use to plot the heat map
+hm.palette <-colorRampPalette(rev(brewer.pal(10, 'RdYlGn')),space='Lab')
+
+# Plot the heat map
+ggplot(data = center_reshape, aes(x = features, y = cluster, fill = values)) +
+    scale_y_continuous(breaks = seq(1, 3, by = 1)) +
+    geom_tile() +
+    coord_equal() +
+    scale_fill_gradientn(colours = hm.palette(90)) +
+    theme_classic()
+```
+```{r}
+k3$centers
+k3$size
+```
+
+*** From the above analysis you will notice that Cluster 1, size = 63, is highly loyal, favoring main brands and bigger individual purchases, with middling overall value. Cluster 2, size = 202, has moderate loyalty, favoring many brands, and of high value.
+Cluster 3, size = 335, is also not very loyal, but may be of the least interest since its customers have the
+lowest value.
+
+## Q 1 - B
+## Clusters based on "Basis for Purchase"
+* The variables used are: Pur_vol_no_promo, Pur_vol_promo_6, Pur_vol_other, all price categories, selling propositions 5 and 14 (most people seemed to be responding to one or the other of these promotions/propositions).
+* we dropped all the other selling propositions except PropCat.5 and PropCat.14
+
+```{r}
+set.seed(123)
+# Sub setting basis of purchase variables
+P_Basis<-Soap[,c(13,19:21,31:35,44)]
+# Finding out the total volumes for each brand category
+volume2 <- function(x){
+return(x*P_Basis$Total.Volume)
+}
+Pur_Basis<-as.data.frame(lapply(P_Basis[2:10],volume2))
+```
+
+```{r, fig.height=6, fig.width=14}
+boxplot(Pur_Basis)
+# Note that the data show some variations in their ranges so, I will Scale the data using function scale.
+Basis_scaled <- scale(Pur_Basis)
+head(Basis_scaled)
+boxplot(Basis_scaled)
+```
+
+## Using K-mean clustring for Bsis of Purchase clustering
+### I will use k= 2 for initial clustering
+```{r}
+set.seed(123)
+k2_Basis <- kmeans(Basis_scaled, centers = 2, nstart = 25) # k = 2, number of restarts = 25
+k2_Basis$centers
+k2_Basis$size
+```
+* The two clusters are well separated across most variables. Cluster 1, size = 540 purchases without needing promotional offers, likes pricing categories 1, 2 and 4, and is somewhat responsive to the selling propositions 5. 
+* Cluster 2, size = 60 responds to promotional offers and pricing category 3, and not to the selling propositions 14  
+
+** Using "elbow chart" to determine the best k
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+#Screen Plot - Check for the optimal number of clusters given the data
+wss <- (nrow(Basis_scaled)-1)*sum(apply(Basis_scaled,2,var))
+wss
+
+for (i in 2:15) 
+  wss[i] <- sum(kmeans(Basis_scaled, 
+                       centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters", 
+     ylab="Within groups sum of squares",
+     main="Assessing the Optimal Number of Clusters with the Elbow Method",
+     pch=19, cex=2)
+```
+* The above graph shows that the k =4 is the best number of clusters according to the Elbow method
+
+* Running the k-means algorithm using k = 4.
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+k4_Basis <- kmeans(Basis_scaled, centers = 4, nstart = 25) # k = 4, number of restarts = 25
+```
+
+```{r, fig.height=7, fig.width=14}
+set.seed(123)
+# Plot results
+plot(Basis_scaled, col =(k4_Basis$cluster) , 
+     main="K-Means with 3 clusters", 
+     pch=16, cex=2)
+```
+
+* I can Visualize the characteristics of clusters
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+library(GGally)
+
+k4_Basis$centers
+k4_Basis$size
+# Storing the clusters in a data frame along with the data
+cluster_B <- c(1,2,3,4)
+Basis_clusters <- cbind(cluster_B, k4_Basis$centers)
+ggparcoord((Basis_clusters),
+           columns = 1:10, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.4
+)
+```
+
+* From the above analysis, I can figure out that the clusters are well separated across most variables. Cluster 1 = 100, high loyal, is notable for its responsiveness to price category 1, 2 and 4 and selling proposition 5 coupled with aversion to price categories 3 and selling proposition 14. Cluster 2 = 47 needs promotions, likes pricing category 3, and is responsive to selling proposition 14. Cluster 3 = 453 is averse to promotions, likes price categories 1, and is not responsive to the two selling propositions.
+
+## Q 1 - C
+## Clusters based on both purchase behavior and basis of purchase without the Demographic information
+```{r}
+set.seed(123)
+# combining brand loyalty variables with basis of purchase variables
+Both <-cbind(Soap_scaled, Basis_scaled)
+
+### Using k= 2
+k2_Both <- kmeans(Both, centers = 2, nstart = 25) # k = 2, number of restarts = 25
+k2_Both$centers
+k2_Both$size
+```
+
+* I can Visualize the characteristics of clusters
+```{r, fig.height=6, fig.width=14}
+# Store the clusters in a data frame along with the data
+cluster_Both <- c(1,2)
+Both_clusters <- cbind(cluster_Both, k2_Both$centers)
+ggparcoord((Both_clusters),
+           columns = 1:20, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.3 
+)
+```
+* I can add the demographic information
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+# adding Demographic variables
+Demo <- Soap[1:10]
+demo_scaled <- scale(Demo)
+Both_Demo <- cbind(demo_scaled,Both)
+
+### we will use k= 2
+k2_Both_Demo <- kmeans(Both_Demo, centers = 2, nstart = 25) # k = 2, number of restarts = 25
+k2_Both_Demo$centers
+k2_Both_Demo$size
+boxplot(Both_Demo)
+```
+* The two clusters are separated on almost all variables, Avg Price being an important exception.
+Cluster1 = 140, is the more loyal cluster, with lower socioeconomic status and affluence.
+
+* I can Visualize the characteristics of clusters
+```{r, fig.height=6, fig.width=14}
+# Store the clusters in a data frame along with the data
+cluster_Both_Demo <- c(1,2)
+Both_Demo_clusters <- cbind(cluster_Both_Demo, k2_Both_Demo$centers)
+ggparcoord((Both_Demo_clusters),
+           columns = 1:30, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.3 
+)
+```
+## Q 2.
+## Best cluster approach
+
+** Using "elbow chart" to determine the best k
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+#Scree Plot - Check for the optimal number of clusters given the data
+wss2 <- (nrow(Both_Demo)-1)*sum(apply(Both_Demo,2,var))
+wss2
+
+for (i in 2:15) 
+  wss2[i] <- sum(kmeans(Both_Demo, 
+                       centers=i)$withinss)
+plot(1:15, wss2, type="b", xlab="Number of Clusters", 
+     ylab="Within groups sum of squares",
+     main="Assessing the Optimal Number of Clusters with the Elbow Method",
+     pch=19, cex=2)
+```
+## from elbow I can see that k =4 seem to be the best options
+
+```{r, fig.height=6, fig.width=14}
+set.seed(123)
+### I will use k= 4 for Both types of variables with Demographic variables added
+k4_Both_Demo <- kmeans(Both_Demo, centers = 4, nstart = 25) # k = 3, number of restarts = 25
+k4_Both_Demo$centers
+k4_Both_Demo$size
+
+# Storing the clusters in a data frame along with the data
+cluster_Both_Demo4 <- c(1,2,3,4)
+Both_Demo_clusters4 <- cbind(cluster_Both_Demo4, k4_Both_Demo$centers)
+ggparcoord((Both_Demo_clusters4),
+           columns = 1:30, groupColumn = 1, 
+           showPoints = TRUE, 
+           alphaLines = 0.3 
+)
+```
+** Cluster 1 (n=73) is characterized by low volume, low loyalty, and sensitivity to promotions and price (responsive to cat. 1, unresponsive to 2 and 3), and unmoved by selling proposition. Demographically, it is affluent, of high socioeconomic status, and has relatively small family size.
+
+** Cluster 1 (n=173) is distinguished mostly by the purchase behavior variables - it has low brand loyalty together with high value, volume and frequency. The brand switching seems to be intrinsic - this group is not particularly responsive to promotions, pricing or selling propositions. Demographically it is relatively affluent and educated.
+
+** Cluster 3 (n=260) is a "gray" cluster, it is not characterized by very extreme/distinctive values across all variables, but is responsive to price category 2 and selling proposition 5. Demographically it is relatively affluent and educated.
+
+** Cluster 4 (n=94) stands out in both groups of variables - it has high loyalty, low value and price per purchase, and very differential response to price (unresponsive to categories 1, 2 and 4, highly responsive to category 3), and selling proposition (unresponsive to #5, highly responsive to #14). Demographically it has low affluence and education.
+
+
+```{r}
+# While deciding on the better segmentation,
+
+# As we can notice that for the Purchase Behavior approach 2 clusters are better than 3, for Basis of Purchase also k=2 is better than k= 3 and it is the same for clustering Both types together, But I am clustering such type of data for marketing and promotion strategies so I need availability of different options. 
+
+# Here is no single "right" approach to clustering; different approaches are feasible depending on different marketing purposes. CRISA is a marketing agency and owns the data, which it collected at considerable expense, so it will want to be able to use both the data and the segmentation analysis in different ways for different clients.
+```
+** Here are just a few possible marketing approaches:
+** 1. Establishing named customer "personas," corresponding to the cluster segments, for use by a client's sales and marketing teams.
+
+** 2. Establishing named customer "personas," corresponding to the cluster segments, for use by CRISA in providing marketing services to clients.
+
+** 3. Capture affluent market share" campaign for a client who wants to target more affluent consumers who are not wedded to their current brand, and secure more brand share.
+
+** 4. "Down market" campaign for a data-poor client to build a "value" brand for less affluent consumers
+
+## Building a predictive model using 2 segments
+** "Down market" scenario
+*** This fourth scenario is the one I will explore further to develop a predictive model, and classify people into either "value conscious" or not. "Data poor" means that the client has, or can get, demographic data on their customers, but not detailed purchase data (particularly involving other brands). So a predictive model is to be built using just demographic data. I will look at the results of clustering into two segments based on CRISA's own detailed purchase data, then classify people into those two segments.
+
+## Q 3
+```{r}
+set.seed(321)
+k2_Model <- kcca(Both, k = 2, kccaFamily("kmeans")) # k = 2, number of restarts = 25
+k2_Model
+pred <- predict(k2_Model, Both)
+cluster_data <- data.frame(cluster = pred)
+cluster_Demo <- cbind(cluster_data,Demo)
+
+# changing the target variable (cluster) to binary variable cluster1 = 1 , cluster2 = 0 
+cluster_Demo$cluster <- ifelse(cluster_Demo$cluster==1,1,0)
+head(cluster_Demo)
+cluster_Demo_final <- dummy.data.frame(cluster_Demo, names=c("SEC","FEH","MT","SEX","AGE","EDU","CHILD","CS"), sep = ".")
+cluster_Demo_final$cluster <- as.factor(cluster_Demo_final$cluster)
+str(cluster_Demo_final)
+```
+
+### The two clusters of Both (Purchase Behavior and Basis of Purchase) variables are separated on almost all variables.
+** Cluster 1 n = 159 is the more loyal, with lower socioeconomic status and affluence, and larger
+households.
+** So my "success" category is cluster 1, the less affluent group, lower socioeconomic group, which also turns out to be highly loyal and, as it happens, spends roughly as much as the more affluent group. This is a promising group around which to build a down-market brand strategy.
+
+```{r}
+# partitioning data to training and test data
+Train_Index<-createDataPartition(cluster_Demo_final$cluster, p=0.7, list=FALSE) # Use 70% of data for training and the rest for test
+Train <-cluster_Demo_final[Train_Index,]
+Test <-cluster_Demo_final[-Train_Index,]
+```
+
+```{r}
+# Fit Model
+Fit <- glm(cluster~.,family="binomial", data=Train)
+summary(Fit)
+```
+** The Na coefficients errors are (9 not defined because of singularities) they are not affecting the model
+
+## I will make some predictions using our model
+```{r}
+# prediction for the training data
+Prob_Train <- predict(Fit, Train, type="response")
+Pred_Train <- ifelse(Prob_Train > 0.35, 1, 0)
+head(Prob_Train)
+head(Pred_Train)
+table(Pred_Train, Train$cluster)
+mean(Pred_Train == Train$cluster)
+# The accuracy rate for the train data is 84.08%, representing an error rate of about 22.91%.
+
+library(pROC)
+roc(Train$cluster, Prob_Train)
+plot.roc(Train$cluster,Prob_Train)
+
+# prediction for the test data with increasing the threshold to 0.8 as it give us more accuracy for the model
+Prob_Test <- predict(Fit, Test, type="response")
+Pred_Test <- ifelse(Prob_Test > 0.8, 1, 0)
+head(Prob_Test)
+head(Pred_Test)
+table(Pred_Test, Test$cluster)
+mean(Pred_Test == Test$cluster)
+#  The accuracy rate for the test data is 77.09%, representing an error rate of about 22.91%.
+
+library(pROC)
+roc(Test$cluster, Prob_Test)
+plot.roc(Test$cluster,Prob_Test)
+```
+*** You can see that the lift curve shows the model has a good predictive power.
+
+### Several steps can be explored next to improve predictive performance:
+* 1. Some of the demographic categorical variables may not have much value being treated as is, as ordered categorical variables. They could be reviewed and turned into binary dummies.
+* 2. Instead of using a two-cluster model, a multi-cluster model could be used in hopes of deriving more distinguishable clusters. The non-success clusters could then be consolidated. For example, cluster #2 in the 4-cluster model is similar to our cluster 1 ("success") in the 2-cluster model, only more sharply defined.
+* 3. Demographic predictors could be added to the original clustering process.
+* 4. In the real world, going beyond the parameters of this case study, CRISA would probably work with the client to add the client's own purchase data to the model to improve it over time.
